@@ -721,14 +721,169 @@ async function main() {
       const running = await isPortInUse(port);
       const pidInfo = readPidFile();
       if (running && pidInfo) {
-        console.log('Worker is running');
+        console.log('✅ Worker is running');
         console.log(`  PID: ${pidInfo.pid}`);
         console.log(`  Port: ${pidInfo.port}`);
         console.log(`  Started: ${pidInfo.startedAt}`);
+        
+        // Check health
+        const healthy = await waitForHealth(port, 2000);
+        if (healthy) {
+          console.log('  Health: ✅ Healthy');
+        } else {
+          console.log('  Health: ⚠️  Not responding to health checks');
+        }
       } else {
-        console.log('Worker is not running');
+        console.log('❌ Worker is not running');
+        console.log('\n💡 To start the worker:');
+        console.log('   npm run worker:start');
       }
       process.exit(0);
+    }
+
+    case 'diagnose': {
+      console.log('\n🔍 Claude-Mem Diagnostic Check\n');
+      console.log('='.repeat(50));
+      
+      let issuesFound = 0;
+      const issues: string[] = [];
+      const suggestions: string[] = [];
+
+      // Helper to check if Bun is installed
+      const checkBunInstalled = async (): Promise<boolean> => {
+        try {
+          const { spawnSync } = await import('child_process');
+          const result = spawnSync('bun', ['--version'], {
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: process.platform === 'win32'
+          });
+          if (result.status === 0) return true;
+        } catch {
+          // Check common installation paths
+        }
+        
+        const bunPaths = process.platform === 'win32'
+          ? [path.join(homedir(), '.bun', 'bin', 'bun.exe')]
+          : [path.join(homedir(), '.bun', 'bin', 'bun'), '/usr/local/bin/bun', '/opt/homebrew/bin/bun'];
+        
+        return bunPaths.some(p => existsSync(p));
+      };
+
+      // Check 1: Worker running
+      console.log('\n1️⃣  Checking worker service...');
+      const running = await isPortInUse(port);
+      if (running) {
+        const healthy = await waitForHealth(port, 2000);
+        if (healthy) {
+          console.log('   ✅ Worker is running and healthy');
+        } else {
+          console.log('   ⚠️  Worker is running but not responding to health checks');
+          issuesFound++;
+          issues.push('Worker not responding to health checks');
+          suggestions.push('Try: npm run worker:restart');
+        }
+      } else {
+        console.log('   ❌ Worker is not running');
+        issuesFound++;
+        issues.push('Worker service is not running');
+        suggestions.push('Run: npm run worker:start');
+      }
+
+      // Check 2: Settings file
+      console.log('\n2️⃣  Checking settings...');
+      const settingsPath = path.join(homedir(), '.claude-mem', 'settings.json');
+      if (existsSync(settingsPath)) {
+        try {
+          const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+          const provider = settings.CLAUDE_MEM_PROVIDER || 'claude';
+          console.log(`   ✅ Settings file exists (provider: ${provider})`);
+          
+          // Check if provider is configured
+          if (provider === 'gemini' && !settings.CLAUDE_MEM_GEMINI_API_KEY) {
+            console.log('   ⚠️  Gemini provider selected but API key not set');
+            issuesFound++;
+            issues.push('Gemini API key not configured');
+            suggestions.push('Set CLAUDE_MEM_GEMINI_API_KEY in settings.json');
+          } else if (provider === 'openrouter' && !settings.CLAUDE_MEM_OPENROUTER_API_KEY) {
+            console.log('   ⚠️  OpenRouter provider selected but API key not set');
+            issuesFound++;
+            issues.push('OpenRouter API key not configured');
+            suggestions.push('Set CLAUDE_MEM_OPENROUTER_API_KEY in settings.json');
+          }
+        } catch (error) {
+          console.log('   ❌ Settings file is corrupted');
+          issuesFound++;
+          issues.push('Settings file is corrupted');
+          suggestions.push('Delete settings.json and restart (will recreate with defaults)');
+        }
+      } else {
+        console.log('   ⚠️  Settings file not found (will be created on first use)');
+      }
+
+      // Check 3: Database
+      console.log('\n3️⃣  Checking database...');
+      const dbPath = path.join(homedir(), '.claude-mem', 'claude-mem.db');
+      if (existsSync(dbPath)) {
+        const stats = require('fs').statSync(dbPath);
+        const sizeKB = (stats.size / 1024).toFixed(2);
+        console.log(`   ✅ Database exists (${sizeKB} KB)`);
+      } else {
+        console.log('   ⚠️  Database not found (will be created on first use)');
+      }
+
+      // Check 4: Dependencies
+      console.log('\n4️⃣  Checking dependencies...');
+      const bunInstalled = await checkBunInstalled();
+      if (bunInstalled) {
+        console.log('   ✅ Bun is installed');
+      } else {
+        console.log('   ❌ Bun is not installed');
+        issuesFound++;
+        issues.push('Bun runtime not found');
+        const installCmd = process.platform === 'win32'
+          ? 'powershell -c "irm bun.sh/install.ps1 | iex"'
+          : 'curl -fsSL https://bun.sh/install | bash';
+        suggestions.push(`Install Bun: ${installCmd}`);
+      }
+
+      // Check 5: Plugin installation
+      console.log('\n5️⃣  Checking plugin installation...');
+      const pluginPath = path.join(homedir(), '.claude', 'plugins', 'marketplaces', 'thedotmack');
+      if (existsSync(pluginPath)) {
+        const hooksPath = path.join(pluginPath, 'plugin', 'hooks', 'hooks.json');
+        if (existsSync(hooksPath)) {
+          console.log('   ✅ Plugin hooks are installed');
+        } else {
+          console.log('   ⚠️  Plugin hooks not found');
+          issuesFound++;
+          issues.push('Plugin hooks not installed');
+          suggestions.push('Reinstall plugin: /plugin install claude-mem');
+        }
+      } else {
+        console.log('   ❌ Plugin not installed');
+        issuesFound++;
+        issues.push('Plugin not installed');
+        suggestions.push('Install plugin: /plugin install claude-mem');
+      }
+
+      // Summary
+      console.log('\n' + '='.repeat(50));
+      if (issuesFound === 0) {
+        console.log('\n✅ All checks passed! Claude-Mem is working correctly.\n');
+      } else {
+        console.log(`\n⚠️  Found ${issuesFound} issue(s):\n`);
+        issues.forEach((issue, i) => {
+          console.log(`   ${i + 1}. ${issue}`);
+        });
+        console.log('\n💡 Suggested fixes:\n');
+        suggestions.forEach((suggestion, i) => {
+          console.log(`   ${i + 1}. ${suggestion}`);
+        });
+        console.log('\n📚 For more help: https://docs.claude-mem.ai/troubleshooting\n');
+      }
+      
+      process.exit(issuesFound > 0 ? 1 : 0);
     }
 
     case 'cursor': {

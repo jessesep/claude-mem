@@ -64,8 +64,13 @@ async function summaryHook(input?: StopInput): Promise<void> {
   });
 
   if (!response.ok) {
+    const errorText = await response.text().catch(() => 'Unknown error');
+    // Log error but don't fail the hook - summary is non-critical
+    logger.error('HOOK', `Summary generation failed (${response.status}): ${errorText}`, {
+      sessionId: session_id
+    });
     console.log(STANDARD_HOOK_RESPONSE);
-    throw new Error(`Summary generation failed: ${response.status}`);
+    return; // Don't throw - allow session to complete
   }
 
   logger.debug('HOOK', 'Summary request sent successfully');

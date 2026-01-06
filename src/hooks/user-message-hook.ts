@@ -25,7 +25,10 @@ const response = await fetch(
 );
 
 if (!response.ok) {
-  throw new Error(`Failed to fetch context: ${response.status}`);
+  const errorText = await response.text().catch(() => 'Unknown error');
+  // Don't throw - this is informational only, allow session to continue
+  logger.warn('HOOK', `Failed to fetch context for display (${response.status}): ${errorText}`);
+  process.exit(HOOK_EXIT_CODES.USER_MESSAGE_ONLY);
 }
 
 const output = await response.text();

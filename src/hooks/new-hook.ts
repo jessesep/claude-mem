@@ -41,7 +41,8 @@ async function newHook(input?: UserPromptSubmitInput): Promise<void> {
   });
 
   if (!initResponse.ok) {
-    throw new Error(`Session initialization failed: ${initResponse.status}`);
+    const errorText = await initResponse.text().catch(() => 'Unknown error');
+    throw new Error(`Session initialization failed (${initResponse.status}): ${errorText}`);
   }
 
   const initResult = await initResponse.json();
@@ -77,7 +78,8 @@ async function newHook(input?: UserPromptSubmitInput): Promise<void> {
   });
 
   if (!response.ok) {
-    throw new Error(`SDK agent start failed: ${response.status}`);
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`SDK agent start failed (${response.status}): ${errorText}`);
   }
 
   logger.info('HOOK', `INIT_COMPLETE | sessionDbId=${sessionDbId} | promptNumber=${promptNumber} | project=${project}`, {
