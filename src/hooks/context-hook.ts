@@ -36,7 +36,8 @@ async function contextHook(input?: SessionStartInput): Promise<string> {
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`Context generation failed: ${response.status}`);
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Context generation failed (${response.status}): ${errorText}`);
   }
 
   const result = await response.text();

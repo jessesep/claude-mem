@@ -61,7 +61,8 @@ async function saveHook(input?: PostToolUseInput): Promise<void> {
   });
 
   if (!response.ok) {
-    throw new Error(`Observation storage failed: ${response.status}`);
+    const errorText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Observation storage failed (${response.status}): ${errorText}`);
   }
 
   logger.debug('HOOK', 'Observation sent successfully', { toolName: tool_name });
